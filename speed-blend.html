@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>three.js webgl - animation - skinning</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+      body {
+        color: #000;
+        font-family:Monospace;
+        font-size:13px;
+        text-align:center;
+
+        background-color: #fff;
+        margin: 0px;
+        overflow: hidden;
+      }
+
+      #info {
+        position: absolute;
+        top: 0px; width: 100%;
+        padding: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container"></div>
+
+    <script src="js/Three.js"></script>
+    <script src="js/OrbitControls.js"></script>
+    <script src="js/Animation.js"></script>
+    <script src="js/AnimationHandler.js"></script>
+    <script src="js/Skeleton.js"></script>
+    <script src="js/Detector.js"></script>
+    <script src="js/dat.gui.min.js"></script>
+
+    <script src="js/SpeedBlendCharacter.js"></script>
+    <script src="js/SpeedBlendGui.js"></script>
+    <script src="js/AnimationGui.js"></script>
+    <script src="js/SkeletonHelper.js"></script>
+
+    <script>
+
+      if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+      window.onload = init;
+
+      var container;
+
+      var camera, scene, boneScene, renderer, controls;
+
+      var light, lightOffset;
+      var blendMesh = null;
+
+      var clock = new THREE.Clock();
+      var gui = null;
+      var animGui = null;
+
+      var isFrameStepping = false;
+      var timeToStep = 0;
+      var speedTimeElapsed = 0;
+      var autoSpeedEnabled = false;
+
+      // -----------------------------------------------------------------------
+      function init() {
+
+        container = document.getElementById( 'container' );
+
+        boneScene = new THREE.Scene();
+        scene = new THREE.Scene();
+
+        scene.fog = new THREE.Fog( 0xB0CAE1, 1000.0, 12000.0 );
+        scene.add ( new THREE.AmbientLight( 0xaaaaaa ) );
+
+        lightOffset = new THREE.Vector3( 0, 0, 1000.0 );
+
+        light = new THREE.DirectionalLight( 0xffffff, 1.5 );
+        light.position.copy( lightOffset );
+        scene.add( light );
+
+        renderer = new THREE.WebGLRenderer( { antialias: true, alpha: false } );
+        renderer.setClearColor( '#777777', 1 );
+        renderer.setSize( window.innerWidth, window.innerHeight );
+        renderer.autoClear = false;
+
+        container.appendChild( renderer.domElement );
+
+        window.addEventListener( 'resize', onWindowResize, false );
+
+        window.addEventListener( 'pause-animation', onPauseAnimation );
+        window.addEventListener( 'step-animation', onStepAnimation );
+        window.addEventListener( 'change-speed', onChangeSpeed );
+        window.addEventListener( 'increase-speed', onAdjustSpeed );
+        window.addEventListener( 'decrease-speed', onAdjustSpeed );
+        window.addEventListener( 'toggle-autospeed', onToggleAutoSpeed );
+        window.addEventListener( 'toggle-lock-camera', onLockCameraToggle );
+        window.addEventListener( 'toggle-show-skeleton', onShowSkeletonToggle );
+        window.addEventListener( 'toggle-show-model', onShowModelToggle );
+
+        loadSkeletalMeshes();
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onWindowResize() {
+
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize( window.innerWidth, window.innerHeight );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onStopAnimation( event ) {
+
+        blendMesh.stopAll();
+        isFrameStepping = false;
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onPauseAnimation( event ) {
+
+        ( isFrameStepping ) ? blendMesh.unPauseAll(): blendMesh.pauseAll();
+
+        isFrameStepping = !isFrameStepping;
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onStepAnimation( event ) {
+
+        blendMesh.unPauseAll();
+        isFrameStepping = true;
+        timeToStep = event.detail.stepSize;
+      }
+
+      // -----------------------------------------------------------------------
+      function onAdjustSpeed( event ) {
+
+        blendMesh.setSpeed( blendMesh.speed + event.detail.stepSize );
+        gui.setSpeed( blendMesh.speed );
+      }
+
+      // -----------------------------------------------------------------------
+      function onChangeSpeed( event ) {
+
+        blendMesh.setSpeed( event.detail.speed );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onToggleAutoSpeed( event ) {
+
+        autoSpeedEnabled = !autoSpeedEnabled;
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onLockCameraToggle( event ) {
+
+        var shouldLock = event.detail.shouldLock;
+        controls.enabled = !shouldLock;
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onShowSkeletonToggle( event ) {
+
+        var shouldShow = event.detail.shouldShow;
+        blendMesh.showSkeleton( shouldShow );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onShowModelToggle( event ) {
+
+        var shouldShow = event.detail.shouldShow;
+        blendMesh.showModel( shouldShow );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function loadSkeletalMeshes() {
+
+        blendMesh = new THREE.SpeedBlendCharacter();
+        blendMesh.load( "models/marine/marine_anims.js", buildScene );
+
+      }
+
+      // -----------------------------------------------------------------
+      function buildScene() {
+
+        blendMesh.rotation.y = Math.PI * -135 / 180;
+        scene.add( blendMesh );
+
+        var aspect = window.innerWidth / window.innerHeight;
+        var radius = blendMesh.geometry.boundingSphere.radius;
+
+        camera = new THREE.PerspectiveCamera( 45, aspect, 1, 10000 );
+        camera.position.set( 0.0, radius, radius * 3.5 );
+
+        controls = new THREE.OrbitControls( camera );
+        controls.target = new THREE.Vector3( 0, radius, 0 );
+
+        gui = new SpeedBlendGui(
+          blendMesh.animations[ 'idle' ],
+          blendMesh.animations[ 'walk' ],
+          blendMesh.animations[ 'run' ]
+        );
+
+        animGui = new AnimationGui(blendMesh.animations);
+
+        // Hack auto speed elapsed to give speed values starting at 0
+        speedTimeElapsed = gui.getAutoPeriod() * 3 / 4;
+
+        update();
+      }
+
+      // -----------------------------------------------------------------------
+      function update() {
+
+        requestAnimationFrame( update, renderer.domElement );
+
+        var scale = gui.getTimeScale();
+        var delta = clock.getDelta();
+        var stepSize = (!isFrameStepping) ? delta * scale: timeToStep;
+
+        if ( autoSpeedEnabled ) {
+
+          var autoPeriod = gui.getAutoPeriod();
+
+          speedTimeElapsed += stepSize;
+
+          // map from period to speed between [0, 1]
+          var periodicValue = Math.sin( speedTimeElapsed * Math.PI * 2 / autoPeriod );
+          var newSpeed = periodicValue / 2 + 0.5;
+
+          gui.setSpeed( newSpeed );
+          blendMesh.setSpeed( newSpeed );
+
+        }
+
+        if ( stepSize > 0 ) {
+
+          THREE.AnimationHandler.update( stepSize );
+          blendMesh.updateSkeletonHelper();
+
+        }
+
+        timeToStep = 0;
+
+        renderer.clear();
+        renderer.render( scene, camera );
+
+      }
+
+    </script>
+
+  </body>
+</html>
+

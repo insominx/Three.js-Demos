@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - animation - skinning</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #000;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+
+				background-color: #fff;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="container"></div>
+		<div id="info" style="display:'';">
+				<b>Three.js - Skeletal Animation Blending </b><br>
+				<p>The 3 models in the top row each show a single animation.<br>
+				The model below shows the combined results of blending each selected animation.
+				</p>
+		</div>
+
+		<script src="js/Three.js"></script>
+		<script src="js/Animation.js"></script>
+		<script src="js/AnimationHandler.js"></script>
+		<script src="js/RotationControls.js"></script>
+
+		<script src="js/Detector.js"></script>
+		<script src="js/dat.gui.min.js"></script>
+
+		<script src="js/BlendCharacter.js"></script>
+		<script src="js/BlendCharacterGui.js"></script>
+		<script src="js/AnimationGui.js"></script>
+		<script src="js/SkeletonHelper.js"></script>
+
+		<script>
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			window.onload = init;
+
+			var container;
+
+			var camera, scene, renderer, controls;
+
+			var light, lightOffset;
+
+			var blendMesh = null;
+			var referenceMeshList = [];
+
+			var clock = new THREE.Clock();
+			var gui = null;
+
+			var isFrameStepping = false;
+			var timeToStep = 0;
+
+			// -----------------------------------------------------------------------
+			function init() {
+
+				container = document.getElementById( 'container' );
+
+				boneScene = new THREE.Scene();
+				scene = new THREE.Scene();
+
+				scene.fog = new THREE.Fog( 0xB0CAE1, 1000.0, 12000.0 );
+				scene.add ( new THREE.AmbientLight( 0xaaaaaa ) );
+
+				lightOffset = new THREE.Vector3( 0, 0, 1000.0 );
+
+				light = new THREE.DirectionalLight( 0xffffff, 1.5 );
+				light.position.copy( lightOffset );
+				scene.add( light );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true, alpha: false } );
+				renderer.setClearColor( '#777777', 1 );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.autoClear = false;
+
+				container.appendChild( renderer.domElement );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				window.addEventListener( 'start-animation', onStartAnimation );
+				window.addEventListener( 'stop-animation', onStopAnimation );
+				window.addEventListener( 'pause-animation', onPauseAnimation );
+				window.addEventListener( 'weight-animation', onWeightAnimation );
+				window.addEventListener( 'step-animation', onStepAnimation );
+				window.addEventListener( 'crossfade', onCrossfade );
+				window.addEventListener( 'warp', onWarp );
+				window.addEventListener( 'toggle-show-model', onShowModelToggle );
+				window.addEventListener( 'toggle-show-skeleton', onShowSkeletonToggle );
+				window.addEventListener( 'toggle-lock-camera', onLockCameraToggle );
+
+				loadSkeletalMeshes();
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onStartAnimation(event) {
+
+				var data = event.detail;
+
+				// Reference meshes each play their own single animation
+				for ( var i = 0; i < data.anims.length; ++i ) {
+
+					referenceMeshList[i].stopAll();
+					referenceMeshList[i].play(data.anims[i]);
+
+				}
+
+				blendMesh.stopAll();
+
+				// the blend mesh will combine 1 or more animations
+				for ( var i = 0; i < data.anims.length; ++i ) {
+
+					blendMesh.play(data.anims[i], data.weights[i]);
+
+				}
+
+				isFrameStepping = false;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onCrossfade( event ) {
+
+				var data = event.detail;
+
+				// Reference meshes each play their own single animation
+				for ( var i = 0; i < data.anims.length; ++i ) {
+
+					referenceMeshList[i].stopAll();
+					referenceMeshList[i].play( data.anims[ i ] );
+
+				}
+
+				blendMesh.stopAll();
+				blendMesh.crossfade( data.from, data.to, data.time );
+
+				isFrameStepping = false;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onWarp( event ) {
+
+				var data = event.detail;
+
+				// Reference meshes each play their own single animation
+				for ( var i = 0; i < data.anims.length; ++i ) {
+
+					referenceMeshList[i].stopAll();
+					referenceMeshList[i].play( data.anims[ i ] );
+
+				}
+
+				blendMesh.stopAll();
+				blendMesh.warp( data.from, data.to, data.time );
+
+				isFrameStepping = false;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onStopAnimation( event ) {
+
+				for ( var i = 0; i < referenceMeshList.length; ++i ) {
+
+					referenceMeshList[i].stopAll();
+
+				}
+
+				blendMesh.stopAll();
+				isFrameStepping = false;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onPauseAnimation(event) {
+
+				var pauseFunc = ( isFrameStepping ) ? blendMesh.unPauseAll: blendMesh.pauseAll;
+
+				for ( var i = 0; i < referenceMeshList.length; ++i ) {
+
+					pauseFunc.call(referenceMeshList[i]);
+
+				}
+
+				pauseFunc.call(blendMesh);
+
+				isFrameStepping = false;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onStepAnimation(event) {
+
+				for ( var i = 0; i < referenceMeshList.length; ++i ) {
+
+					referenceMeshList[i].unPauseAll();
+
+				}
+
+				blendMesh.unPauseAll();
+
+				isFrameStepping = true;
+				timeToStep = event.detail.stepSize;
+			}
+
+			// -----------------------------------------------------------------------
+			function onWeightAnimation(event) {
+
+				var data = event.detail;
+				for ( var i = 0; i < data.anims.length; ++i ) {
+
+					 blendMesh.applyWeight( data.anims[i], data.weights[i] );
+
+				}
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onShowSkeletonToggle( event ) {
+
+				var shouldShow = event.detail.shouldShow;
+
+				for ( var i = 0; i < referenceMeshList.length; ++i ) {
+
+					referenceMeshList[i].showSkeleton( shouldShow );
+
+				}
+
+				blendMesh.showSkeleton( shouldShow );
+
+			}
+
+			// -----------------------------------------------------------------------
+			function onShowModelToggle( event ) {
+
+				var shouldShow = event.detail.shouldShow;
+
+				for ( var i = 0; i < referenceMeshList.length; ++i ) {
+
+					referenceMeshList[i].showModel( shouldShow );
+
+				}
+
+				blendMesh.showModel( shouldShow );
+
+			}
+
+
+			// -----------------------------------------------------------------------
+			function onLockCameraToggle( event ) {
+
+				var shouldLock = event.detail.shouldLock;
+				controls.enabled = !shouldLock;
+
+			}
+
+			// -----------------------------------------------------------------------
+			function loadSkeletalMeshes() {
+
+				var meshesToCreate = 3;
+				var meshesLoaded = 0;
+
+				for ( var i = 0; i < meshesToCreate; ++i ) {
+
+					referenceMeshList.push( new THREE.BlendCharacter() );
+					referenceMeshList[ i ].load( "models/marine/marine.js", onMeshLoaded );
+
+				}
+
+				blendMesh = new THREE.BlendCharacter();
+				blendMesh.load( "models/marine/marine.js", onMeshLoaded );
+
+				function onMeshLoaded() {
+					if ( ++meshesLoaded === meshesToCreate + 1) {
+						buildScene();
+					}
+				}
+			}
+
+			// -----------------------------------------------------------------
+			function buildScene() {
+
+				var spacing = referenceMeshList[0].geometry.boundingSphere.radius * 1.5;
+				var startX = -((referenceMeshList.length - 1) / 2) * spacing;
+
+				for (var i = 0; i < referenceMeshList.length; ++i ) {
+					referenceMeshList[i].position.x = startX + i * spacing;
+					referenceMeshList[i].position.y = spacing;
+					referenceMeshList[i].rotation.y = Math.PI * -90 / 180;
+					scene.add(referenceMeshList[i]);
+				}
+
+				blendMesh.position.y = -spacing / 2;
+				blendMesh.rotation.y = Math.PI * -90 / 180;
+				scene.add( blendMesh );
+
+				var aspect = window.innerWidth / window.innerHeight;
+				var minDim = spacing * 2;
+
+				camera = new THREE.OrthographicCamera( -minDim * aspect, minDim * aspect, minDim, -minDim, 1, 10000 );
+				camera.position.set(0.0, spacing, 1000);
+
+				controls = new THREE.RotationControls( blendMesh );
+
+				gui = new BlendCharacterGui( blendMesh.animations );
+				new AnimationGui( blendMesh.animations );
+
+				update();
+			}
+
+			// -----------------------------------------------------------------------
+			function update() {
+
+				requestAnimationFrame( update, renderer.domElement );
+
+				var scale = gui.getTimeScale();
+				var delta = clock.getDelta();
+				var stepSize = ( !isFrameStepping ) ? delta * scale: timeToStep;
+
+				blendMesh.update( stepSize );
+				gui.update();
+
+				THREE.AnimationHandler.update( stepSize );
+
+				// Make the reference model's orientation match the blended one below
+				for (var i = 0; i < referenceMeshList.length; ++i ) {
+
+					referenceMeshList[i].rotation.x = blendMesh.rotation.x;
+					referenceMeshList[i].rotation.y = blendMesh.rotation.y;
+					referenceMeshList[i].update();
+
+				}
+
+				timeToStep = 0;
+
+				renderer.clear();
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+
+	</body>
+</html>
+

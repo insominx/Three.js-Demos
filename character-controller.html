@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>three.js webgl - animation - skinning</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+      body {
+        color: #000;
+        font-family:Monospace;
+        font-size:13px;
+        text-align:center;
+
+        background-color: #fff;
+        margin: 0px;
+        overflow: hidden;
+      }
+
+      #info {
+        position: absolute;
+        top: 0px; width: 100%;
+        padding: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container"></div>
+
+    <script src="js/Three.js"></script>
+    <script src="js/OrbitControls.js"></script>
+    <script src="js/Animation.js"></script>
+    <script src="js/AnimationHandler.js"></script>
+    <script src="js/Skeleton.js"></script>
+    <script src="js/Detector.js"></script>
+    <script src="js/dat.gui.min.js"></script>
+
+    <script src="js/SpeedBlendCharacter.js"></script>
+    <script src="js/CharacterController.js"></script>
+    <script src="js/CharacterControllerGui.js"></script>
+    <script src="js/SkeletonHelper.js"></script>
+
+    <script>
+
+      if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+      window.onload = init;
+
+      var container;
+
+      var camera, skyCamera, scene, skyScene, renderer, controls;
+
+      var light, lightOffset;
+      var blendMesh = null, skyMesh = null;
+      var characterController = null;
+
+      var clock = new THREE.Clock();
+      var gui = null;
+
+      var isFrameStepping = false;
+      var timeToStep = 0;
+      var speed = 0, speedDelta = 0;
+
+      var keys = { LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, A: 65, S: 83, D: 68, W: 87 };
+
+      // -----------------------------------------------------------------------
+      function init() {
+
+        container = document.getElementById( 'container' );
+
+        scene = new THREE.Scene();
+        skyScene = new THREE.Scene();
+
+        scene.fog = new THREE.Fog( 0xB0CAE1, 1000.0, 20000.0 );
+        scene.add ( new THREE.AmbientLight( 0xaaaaaa ) );
+
+        lightOffset = new THREE.Vector3( 0, 1000, 1000.0 );
+
+        light = new THREE.DirectionalLight( 0xffffff, 1.5 );
+        light.position.copy( lightOffset );
+        light.castShadow = true;
+        light.shadowMapWidth = 2048;
+        light.shadowMapHeight = 1024;
+        light.shadowDarkness = 0.5;
+        light.shadowCameraNear = 10;
+        light.shadowCameraFar = 10000;
+        light.shadowBias = 0.00001;
+        light.shadowCameraRight =  2000;
+        light.shadowCameraLeft = -2000;
+        light.shadowCameraTop =  2000;
+        light.shadowCameraBottom = -2000;
+        //light.shadowCameraVisible = true;
+
+        scene.add( light );
+
+        renderer = new THREE.WebGLRenderer( { antialias: true, alpha: false } );
+        renderer.setClearColor( '#777777', 1 );
+        renderer.setSize( window.innerWidth, window.innerHeight );
+        renderer.autoClear = false;
+        renderer.shadowMapEnabled = true;
+        renderer.shadowMapType = THREE.PCFSoftShadowMap;
+
+        container.appendChild( renderer.domElement );
+
+        window.addEventListener( 'resize', onWindowResize, false );
+        window.addEventListener( 'toggle-lock-camera', onLockCameraToggle );
+        window.addEventListener( 'toggle-show-skeleton', onShowSkeletonToggle );
+        window.addEventListener( 'toggle-show-model', onShowModelToggle );
+
+        loadSkeletalMeshes();
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onWindowResize() {
+
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+
+        renderer.setSize( window.innerWidth, window.innerHeight );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onLockCameraToggle( event ) {
+
+        var shouldLock = event.detail.shouldLock;
+        controls.enabled = !shouldLock;
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onShowSkeletonToggle( event ) {
+
+        var shouldShow = event.detail.shouldShow;
+        blendMesh.showSkeleton( shouldShow );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function onShowModelToggle( event ) {
+
+        var shouldShow = event.detail.shouldShow;
+        blendMesh.showModel( shouldShow );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function loadSkeletalMeshes() {
+
+        blendMesh = new THREE.SpeedBlendCharacter();
+        blendMesh.load( "models/marine/marine_anims.js", buildScene );
+
+      }
+
+       // -----------------------------------------------------------------------
+      function createSky() {
+
+        var path = "textures/sunnysky/";
+        var format = '.jpg';
+        var urls = [
+          path + 'px' + format, path + 'nx' + format,
+          path + 'py' + format, path + 'ny' + format,
+          path + 'pz' + format, path + 'nz' + format
+         ];
+
+        var textureCube = THREE.ImageUtils.loadTextureCube(urls);
+
+        var shader = THREE.ShaderLib["cube"];
+        shader.uniforms["tCube"].value = textureCube;
+
+        // We're inside the box, so make sure to render the backsides
+        // It will typically be rendered first in the scene and without depth so anything else will be drawn in front
+        var material = new THREE.ShaderMaterial({
+          fragmentShader : shader.fragmentShader,
+          vertexShader   : shader.vertexShader,
+          uniforms       : shader.uniforms,
+          depthWrite     : false,
+          side           : THREE.BackSide
+        });
+
+        // The box dimension size doesn't matter that much when the camera is in the center.  Experiment with the values.
+        skyMesh = new THREE.Mesh( new THREE.CubeGeometry( 10000, 10000, 10000, 1, 1, 1 ), material );
+        skyMesh.renderDepth = -10;
+
+
+        skyScene.add(skyMesh);
+
+      }
+
+      // -----------------------------------------------------------------
+      function buildScene() {
+
+        blendMesh.rotation.y = Math.PI * -135 / 180;
+        blendMesh.castShadow = true;
+        blendMesh.receiveShadow = true;
+
+        scene.add( blendMesh );
+
+        characterController = new THREE.CharacterController( blendMesh );
+
+        var aspect = window.innerWidth / window.innerHeight;
+        var radius = blendMesh.geometry.boundingSphere.radius;
+
+        camera = new THREE.PerspectiveCamera( 45, aspect, 1, 20000 );
+        camera.position.set( 0.0, radius * 3, radius * 3.5 );
+
+        skyCamera = new THREE.PerspectiveCamera( 45, aspect, 1, 20000 );
+        skyCamera.position.set( 0.0, radius * 3, radius * 3.5 );
+
+        controls = new THREE.OrbitControls( camera );
+        controls.noPan = true;
+
+        var loader = new THREE.JSONLoader();
+        loader.load( "models/objects/ground.js", function( geometry, materials ) {
+
+          var ground =  new THREE.Mesh( geometry, materials[0] );
+          ground.scale.set( 20, 20, 20 );
+          ground.receiveShadow = true;
+          ground.castShadow = true;
+          scene.add( ground );
+
+        });
+
+        createSky();
+
+        gui = new CharacterControllerGui();
+
+        update();
+      }
+
+      // -----------------------------------------------------------------------
+      function update() {
+
+        requestAnimationFrame( update, renderer.domElement );
+
+        var scale = gui.getTimeScale();
+        var delta = clock.getDelta();
+        var stepSize = (!isFrameStepping) ? delta * scale: timeToStep;
+
+        if ( stepSize > 0 ) {
+
+          characterController.update( stepSize );
+          gui.setSpeed( blendMesh.speed );
+
+          THREE.AnimationHandler.update( stepSize );
+          blendMesh.updateSkeletonHelper();
+
+        }
+
+        updateCamera();
+
+        timeToStep = 0;
+
+        renderer.clear();
+        renderer.render( skyScene, skyCamera );
+        renderer.render( scene, camera );
+
+      }
+
+      // -----------------------------------------------------------------------
+      function updateCamera() {
+
+        controls.center.copy( blendMesh.position );
+        controls.center.y += blendMesh.geometry.boundingSphere.radius * 2;
+        controls.update();
+
+        var camOffset = camera.position.clone().sub(controls.center);
+        camOffset.normalize().multiplyScalar( 750 );
+        camera.position = controls.center.clone().add(camOffset);
+
+        skyCamera.rotation.copy( camera.rotation );
+
+      }
+
+    </script>
+
+  </body>
+</html>
+
