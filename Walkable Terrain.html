@@ -1,0 +1,264 @@
+<html>
+    <head>
+        <title>Walkable Splatted Heightmap Terrain</title>
+        <meta charset="utf-8">
+        <meta name="author" content="insominx - Michael Guerrero">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    </head>
+    <body style="margin: 0px; overflow: hidden;">
+
+        <script src="js/Three.js"></script>
+        <script src="js/stats.min.js"></script>
+        <script src="js/dat.gui.min.js"></script>
+        <script src="js/Detector.js"></script>
+        <script src="js/TerrainGeometry.js"></script>
+        <script src="js/TerrainControls.js"></script>
+        <script src="js/TerrainShaders.js"></script>
+        <script src="js/TerrainMaterial.js"></script>
+
+        <script>
+
+            if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+            var mainCamera, mainScene;
+            var skyCamera, skyScene, skyMesh;
+
+            var renderer;
+            var controls;
+            var terrainGeom, terrainMesh;
+
+            var debugSphere;
+
+            var clock = new THREE.Clock();
+            var stats;
+
+            var mouseX = 0;
+            var mouseY = 0;
+
+            initScene();
+            initTerrain();
+            initSky();
+
+            //
+
+            function initScene() {
+
+                mainScene = new THREE.Scene();
+                mainCamera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, .1, 20000 );
+
+                // 0xDFF8FD matches the skybox at the horizon
+                // 0xf9eaa9
+                mainScene.fog = new THREE.Fog( 0xDFF8FD, 10.0, 1000.0 );
+
+                var ambientLight = new THREE.AmbientLight( 0x111111 );
+
+                var sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+                sunLight.position.y = sunLight.position.x = 10.0;
+
+                debugSphere = new THREE.Mesh(
+                    new THREE.SphereGeometry(10, 10, 10),
+                    new THREE.MeshBasicMaterial({ map: THREE.ImageUtils.loadTexture("textures/debug/checker_large.png") } )
+                );
+                debugSphere.position.y = 100;
+
+                mainScene.add( debugSphere );
+
+                mainScene.add( ambientLight );
+                mainScene.add( sunLight );
+
+
+                renderer = new THREE.WebGLRenderer();
+                renderer.setSize( window.innerWidth, window.innerHeight );
+                renderer.autoClearColor = false;
+
+                document.body.appendChild(renderer.domElement);
+                document.body.addEventListener( 'keydown', onKeyDown, false);
+                document.body.addEventListener( 'mousemove', onMouseMove, false);
+
+                stats = new Stats();
+                stats.domElement.style.position = 'absolute';
+                stats.domElement.style.top = '0px';
+                document.body.appendChild( stats.domElement );
+            }
+
+            //
+
+            function initGUI() {
+
+                var halfWidth = terrainGeom.width / 2;
+                var halfLength = terrainGeom.length / 2;
+
+                var camPos = controls.getObject().position;
+
+                var gui = new dat.GUI();
+                var camFolder = gui.addFolder('mainCamera');
+                camFolder.add(camPos, "x", -halfWidth, halfWidth, 0.25).listen();
+                camFolder.add(camPos, "z", -halfLength, halfLength, 0.25).listen();
+                camFolder.add(controls, "hat", 0, 1000, 1.0).listen();
+                camFolder.add(controls, "moveSpeed", 1.0, 100.0, 0.5).listen();
+            }
+
+            //
+
+             function initSky() {
+
+                skyScene = new THREE.Scene();
+                skyCamera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, .1, 20000 );
+
+                // We'll be setting yaw and pitch from the control which is applied in that order
+                skyCamera.eulerOrder = "YXZ";
+
+                var path = "textures/sunnysky/";
+                var format = '.jpg';
+                var urls = [
+                    path + 'px' + format, path + 'nx' + format,
+                    path + 'py' + format, path + 'ny' + format,
+                    path + 'pz' + format, path + 'nz' + format
+                ];
+
+                skyCubemap = THREE.ImageUtils.loadTextureCube( urls );
+
+                var shader = THREE.ShaderLib["cube"];
+                shader.uniforms["tCube"].value = skyCubemap;
+
+                // We're inside the box, so make sure to render the backsides
+                // It will typically be rendered first in the mainScene and without depth so anything else will be drawn in front
+                var skyMaterial = new THREE.ShaderMaterial({
+                    fragmentShader : shader.fragmentShader,
+                    vertexShader   : shader.vertexShader,
+                    uniforms       : shader.uniforms,
+                    depthWrite     : false,
+                    side           : THREE.BackSide
+                });
+
+                // The box dimension size doesn't matter that much when the mainCamera is in the center.  Experiment with the values.
+                skyboxMesh = new THREE.Mesh(new THREE.CubeGeometry(10000, 10000, 10000, 1, 1, 1), skyMaterial);
+                skyScene.add(skyboxMesh);
+            }
+
+            //
+
+            function initTerrain() {
+
+                terrainGeom = new THREE.TerrainGeometry();
+                terrainGeom.createGeometry( startAnimating );
+
+                var splat1 = THREE.ImageUtils.loadTexture("textures/terrain/rock1.png");
+                var splat2 = THREE.ImageUtils.loadTexture("textures/terrain/SUNNY-Assorted-Ground.png");
+                var splat3 = THREE.ImageUtils.loadTexture("textures/terrain/grass-and-rock.png");
+                var splat4 = THREE.ImageUtils.loadTexture("textures/terrain/snow.png");
+
+                var alphaMap = THREE.ImageUtils.loadTexture("textures/terrain/splat2.png");
+
+                terrainUniforms.tAlphaMap.value = alphaMap;
+                terrainUniforms.tSplat1.value = splat1;
+                terrainUniforms.tSplat2.value = splat2;
+                terrainUniforms.tSplat3.value = splat3;
+                terrainUniforms.tSplat4.value = splat4;
+
+                var terrainMaterial = new THREE.TerrainMaterial( {
+                    uniforms: terrainUniforms,
+                    vertexShader: terrainVertexShader,
+                    fragmentShader:terrainFragShader,
+                    lights: true,
+                    fog: true
+                });
+
+                terrainMesh = new THREE.Mesh( terrainGeom.bufferGeom, terrainMaterial );
+
+                mainScene.add(terrainMesh);
+            }
+
+            //
+
+            // Called before we update (animate) for the first time
+            function startAnimating() {
+
+                controls = new THREE.TerrainControls(mainCamera, terrainGeom, 3.0);
+                mainScene.add(controls.getObject());
+
+                initGUI();
+
+                // We're done intitializing so begin the frame loop
+                animate();
+
+                window.addEventListener( 'resize', onWindowResize, false );
+            }
+
+            //
+
+            function animate() {
+
+                var delta = clock.getDelta();
+                controls.update( delta );
+
+                skyCamera.rotation.set(controls.getPitch(), controls.getYaw(), 0.0);
+
+                requestAnimationFrame( animate );
+                render();
+
+                stats.update();
+            }
+
+            //
+
+            function render() {
+                renderer.render( skyScene, skyCamera );
+                renderer.render( mainScene, mainCamera );
+            }
+
+            //
+
+            function onWindowResize() {
+
+                var windowHalfX = window.innerWidth / 2;
+                var windowHalfY = window.innerHeight / 2;
+
+                mainCamera.aspect = skyCamera.aspect = window.innerWidth / window.innerHeight;
+                mainCamera.updateProjectionMatrix();
+                skyCamera.updateProjectionMatrix();
+
+                renderer.setSize( window.innerWidth, window.innerHeight );
+            }
+
+            //
+
+            function onMouseMove(event) {
+
+                mouseX = ( event.clientX / window.innerWidth ) * 2 - 1;
+                mouseY = -( event.clientY / window.innerHeight ) * 2 + 1;
+            }
+
+            //
+
+            function onKeyDown(event) {
+
+                if (event.keyCode == 32 || event.shiftKey) {
+
+                    var vector = new THREE.Vector3( mouseX, mouseY, mainCamera.near );
+
+                    // Convert the [-1, 1] screen coordinate into a world coordinate on the near plane
+                    var projector = new THREE.Projector();
+                    projector.unprojectVector( vector, mainCamera );
+
+                    var cameraPosition = controls.getObject().position;
+
+                    vector.sub( cameraPosition ).normalize();
+
+                    var raycaster = new THREE.Raycaster2( cameraPosition, vector);
+
+                    // See if the ray from the camera into the world hits one of our meshes
+                    var intersects = raycaster.intersectObject( terrainMesh );
+
+                    // Toggle rotation bool for meshes that we clicked
+                    if ( intersects.length > 0 ) {
+                        debugSphere.position = intersects[0].point;
+                    }
+                }
+
+            }
+
+        </script>
+
+    </body>
+</html>
